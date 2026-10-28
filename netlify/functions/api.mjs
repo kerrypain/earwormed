@@ -902,6 +902,25 @@ async function sha(s) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+var K = (userId, name) => "u/" + userId + "/" + name;
+var userIdFor = (uid, kh) => uid ? "s" + uid.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60) : "k" + kh.slice(0, 32);
+async function migrate(st) {
+  const old = await st.get("config", { type: "json" });
+  if (!old || !old.kh) return;
+  const userId = userIdFor(old.uid || "", old.kh);
+  for (const n of ["hist", "gaps", "top"]) {
+    const v = await st.get(n, { type: "json" });
+    if (v != null) {
+      await st.setJSON(K(userId, n), v);
+      await st.delete(n);
+    }
+  }
+  await st.setJSON(K(userId, "config"), old);
+  await st.setJSON("k/" + old.kh, userId);
+  const s = await st.get("settings", { type: "json" });
+  if (!s || !s.cid) await st.setJSON("settings", { cid: old.cid });
+  await st.delete("config");
+}
 async function tokenReq(body) {
   const r = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
@@ -966,8 +985,8 @@ function mergeHistory(hist, gaps, items) {
   }
   return { hist, gaps, added: added.length };
 }
-async function collect(st, opts = {}) {
-  const cfg = await st.get("config", { type: "json" });
+async function collect(st, userId, opts = {}) {
+  const cfg = await st.get(K(userId, "config"), { type: "json" });
   if (!cfg) return { ok: false, reason: "unregistered" };
   let tok;
   try {
@@ -976,18 +995,18 @@ async function collect(st, opts = {}) {
     cfg.err = e.code === "invalid_grant" ? "revoked" : "token";
     cfg.errMsg = e.message;
     cfg.errAt = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: false, reason: cfg.err };
   }
   if (tok.refresh_token) cfg.refresh = tok.refresh_token;
   try {
     const rec = await api(tok.access_token, "/me/player/recently-played?limit=50");
-    const hist = await st.get("hist", { type: "json" }) || [];
-    const gaps = await st.get("gaps", { type: "json" }) || [];
+    const hist = await st.get(K(userId, "hist"), { type: "json" }) || [];
+    const gaps = await st.get(K(userId, "gaps"), { type: "json" }) || [];
     const m = mergeHistory(hist, gaps, rec.items || []);
-    if (m.added) await st.setJSON("hist", m.hist);
-    if (m.gaps.length !== gaps.length) await st.setJSON("gaps", m.gaps);
-    const top = await st.get("top", { type: "json" });
+    if (m.added) await st.setJSON(K(userId, "hist"), m.hist);
+    if (m.gaps.length !== gaps.length) await st.setJSON(K(userId, "gaps"), m.gaps);
+    const top = await st.get(K(userId, "top"), { type: "json" });
     if (opts.forceTop || !top || Date.now() - top.ts > TOP_TTL) {
       const r = await Promise.all([
         api(tok.access_token, "/me/top/tracks?time_range=short_term&limit=50"),
@@ -995,7 +1014,7 @@ async function collect(st, opts = {}) {
         api(tok.access_token, "/me/top/tracks?time_range=long_term&limit=50"),
         api(tok.access_token, "/me/top/artists?time_range=long_term&limit=50")
       ]);
-      await st.setJSON("top", {
+      await st.setJSON(K(userId, "top"), {
         ts: Date.now(),
         s: { t: (r[0].items || []).map(slimT), a: (r[1].items || []).map(slimA) },
         l: { t: (r[2].items || []).map(slimT), a: (r[3].items || []).map(slimA) }
@@ -1004,13 +1023,13 @@ async function collect(st, opts = {}) {
     cfg.err = null;
     cfg.errMsg = "";
     cfg.lastRun = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: true, added: m.added };
   } catch (e) {
     cfg.err = e.code === "http403" ? "forbidden" : "fetch";
     cfg.errMsg = e.message;
     cfg.errAt = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: false, reason: cfg.err };
   }
 }
@@ -1021,58 +1040,71 @@ var out = (obj, status = 200) => new Response(JSON.stringify(obj), { status, hea
 async function authed(req, st) {
   const key = req.headers.get("x-key") || "";
   if (key.length < 32) return null;
-  const cfg = await st.get("config", { type: "json" });
-  if (!cfg || cfg.kh !== await sha(key)) return null;
-  return cfg;
+  const kh = await sha(key);
+  const userId = await st.get("k/" + kh, { type: "json" });
+  if (!userId) return null;
+  const cfg = await st.get(K(userId, "config"), { type: "json" });
+  if (!cfg || cfg.kh !== kh) return null;
+  return { userId, cfg };
 }
 var api_default = async (req) => {
   const path = new URL(req.url).pathname.replace(/^\/api\/?/, "").replace(/\/$/, "");
   const st = store();
   try {
+    await migrate(st);
+    if (req.method === "GET" && path === "config") {
+      const s = await st.get("settings", { type: "json" });
+      return out({ cid: s && s.cid || "" });
+    }
     if (req.method === "POST" && path === "register") {
       const b = await req.json().catch(() => ({}));
       if (typeof b.key !== "string" || b.key.length < 32 || b.key.length > 200) return out({ error: "bad key" }, 400);
       if (typeof b.cid !== "string" || !/^[A-Za-z0-9]{20,64}$/.test(b.cid)) return out({ error: "bad client id" }, 400);
       if (typeof b.refresh !== "string" || b.refresh.length < 20 || b.refresh.length > 2e3) return out({ error: "bad token" }, 400);
+      const s = await st.get("settings", { type: "json" });
+      if (s && s.cid && s.cid !== b.cid) return out({ error: "wrong-app" }, 400);
       let tok;
       try {
         tok = await refreshAccess(b.cid, b.refresh);
       } catch (e) {
         return out({ error: "spotify", detail: e.message }, 400);
       }
+      if (!s || !s.cid) await st.setJSON("settings", { cid: b.cid });
       const uid = await spotifyUserId(tok.access_token);
-      const old = await st.get("config", { type: "json" });
       const kh = await sha(b.key);
-      if (old && old.kh !== kh) {
-        if (!(uid && old.uid && uid === old.uid)) return out({ error: "already-registered" }, 403);
-      }
-      await st.setJSON("config", { kh, cid: b.cid, refresh: tok.refresh_token || b.refresh, uid, created: old && old.created || Date.now(), err: null });
-      const res = await collect(st, { forceTop: true });
+      const userId2 = userIdFor(uid, kh);
+      const old = await st.get(K(userId2, "config"), { type: "json" });
+      if (old && old.kh && old.kh !== kh) await st.delete("k/" + old.kh);
+      await st.setJSON(K(userId2, "config"), { kh, cid: b.cid, refresh: tok.refresh_token || b.refresh, uid, created: old && old.created || Date.now(), err: null });
+      await st.setJSON("k/" + kh, userId2);
+      const res = await collect(st, userId2, { forceTop: true });
       return out({ ok: true, collected: res.ok });
     }
-    const cfg = await authed(req, st);
-    if (!cfg) return out({ error: "unauthorized" }, 401);
+    const a = await authed(req, st);
+    if (!a) return out({ error: "unauthorized" }, 401);
+    const { userId, cfg } = a;
     if (req.method === "GET" && path === "data") {
       const q = new URL(req.url).searchParams;
       let c = cfg;
       if (q.get("refresh") === "1" && (!cfg.lastRun || Date.now() - cfg.lastRun > 45e3)) {
-        await collect(st, { forceTop: true });
-        c = await st.get("config", { type: "json" }) || cfg;
+        await collect(st, userId, { forceTop: true });
+        c = await st.get(K(userId, "config"), { type: "json" }) || cfg;
       }
       const [hist, gaps, top] = await Promise.all([
-        st.get("hist", { type: "json" }),
-        st.get("gaps", { type: "json" }),
-        st.get("top", { type: "json" })
+        st.get(K(userId, "hist"), { type: "json" }),
+        st.get(K(userId, "gaps"), { type: "json" }),
+        st.get(K(userId, "top"), { type: "json" })
       ]);
       return out({ hist: hist || [], gaps: gaps || [], top: top || null, err: c.err || null, lastRun: c.lastRun || 0 });
     }
     if (req.method === "POST" && path === "unregister") {
-      await st.delete("config");
+      await st.delete(K(userId, "config"));
+      await st.delete("k/" + cfg.kh);
       return out({ ok: true });
     }
     if (req.method === "POST" && path === "clear") {
-      await st.delete("hist");
-      await st.delete("gaps");
+      await st.delete(K(userId, "hist"));
+      await st.delete(K(userId, "gaps"));
       return out({ ok: true });
     }
     return out({ error: "not found" }, 404);

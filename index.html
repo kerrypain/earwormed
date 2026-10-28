@@ -426,6 +426,7 @@ a.chip:hover{border-color:var(--accent)}
     return h("section", { class: "card setup" },
       h("h2", { class: "big", text: "Connect Spotify" }),
       h("p", { text: "Sign in once to let Earwormed read your recent plays and top tracks and artists. It can't change anything in your account." }),
+      h("p", { class: "note", text: "If Spotify says you aren't registered for this app, the owner needs to add your Spotify email to its user list first." }),
       h("p", { text: "Earwormed's server then checks your recent plays every 30 minutes, so nothing is missed while the app is closed. To do that it keeps a Spotify access key on your Netlify site. Settings > Sign out removes it." }),
       err,
       h("div", { class: "stack" },
@@ -651,7 +652,14 @@ a.chip:hover{border-color:var(--accent)}
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
   }
-  handleCallback().then(function () {
+  function ensureCid() {
+    /* Everyone uses the same Spotify app, so the site hands out its Client ID instead of asking each person to paste it. */
+    if (cid()) return Promise.resolve();
+    return fetch("/api/config", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && /^[A-Za-z0-9]{20,64}$/.test(j.cid || "")) set("lw_cid", j.cid);
+    }).catch(function () {});
+  }
+  ensureCid().then(handleCallback).then(function () {
     render();
     if (cid() && signedIn()) load(false);
   });

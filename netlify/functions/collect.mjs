@@ -898,6 +898,25 @@ var override = null;
 function store() {
   return override || getStore({ name: "earwormed", consistency: "strong" });
 }
+var K = (userId, name) => "u/" + userId + "/" + name;
+var userIdFor = (uid, kh) => uid ? "s" + uid.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60) : "k" + kh.slice(0, 32);
+async function migrate(st) {
+  const old = await st.get("config", { type: "json" });
+  if (!old || !old.kh) return;
+  const userId = userIdFor(old.uid || "", old.kh);
+  for (const n of ["hist", "gaps", "top"]) {
+    const v = await st.get(n, { type: "json" });
+    if (v != null) {
+      await st.setJSON(K(userId, n), v);
+      await st.delete(n);
+    }
+  }
+  await st.setJSON(K(userId, "config"), old);
+  await st.setJSON("k/" + old.kh, userId);
+  const s = await st.get("settings", { type: "json" });
+  if (!s || !s.cid) await st.setJSON("settings", { cid: old.cid });
+  await st.delete("config");
+}
 async function tokenReq(body) {
   const r = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
@@ -955,8 +974,8 @@ function mergeHistory(hist, gaps, items) {
   }
   return { hist, gaps, added: added.length };
 }
-async function collect(st, opts = {}) {
-  const cfg = await st.get("config", { type: "json" });
+async function collect(st, userId, opts = {}) {
+  const cfg = await st.get(K(userId, "config"), { type: "json" });
   if (!cfg) return { ok: false, reason: "unregistered" };
   let tok;
   try {
@@ -965,18 +984,18 @@ async function collect(st, opts = {}) {
     cfg.err = e.code === "invalid_grant" ? "revoked" : "token";
     cfg.errMsg = e.message;
     cfg.errAt = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: false, reason: cfg.err };
   }
   if (tok.refresh_token) cfg.refresh = tok.refresh_token;
   try {
     const rec = await api(tok.access_token, "/me/player/recently-played?limit=50");
-    const hist = await st.get("hist", { type: "json" }) || [];
-    const gaps = await st.get("gaps", { type: "json" }) || [];
+    const hist = await st.get(K(userId, "hist"), { type: "json" }) || [];
+    const gaps = await st.get(K(userId, "gaps"), { type: "json" }) || [];
     const m = mergeHistory(hist, gaps, rec.items || []);
-    if (m.added) await st.setJSON("hist", m.hist);
-    if (m.gaps.length !== gaps.length) await st.setJSON("gaps", m.gaps);
-    const top = await st.get("top", { type: "json" });
+    if (m.added) await st.setJSON(K(userId, "hist"), m.hist);
+    if (m.gaps.length !== gaps.length) await st.setJSON(K(userId, "gaps"), m.gaps);
+    const top = await st.get(K(userId, "top"), { type: "json" });
     if (opts.forceTop || !top || Date.now() - top.ts > TOP_TTL) {
       const r = await Promise.all([
         api(tok.access_token, "/me/top/tracks?time_range=short_term&limit=50"),
@@ -984,7 +1003,7 @@ async function collect(st, opts = {}) {
         api(tok.access_token, "/me/top/tracks?time_range=long_term&limit=50"),
         api(tok.access_token, "/me/top/artists?time_range=long_term&limit=50")
       ]);
-      await st.setJSON("top", {
+      await st.setJSON(K(userId, "top"), {
         ts: Date.now(),
         s: { t: (r[0].items || []).map(slimT), a: (r[1].items || []).map(slimA) },
         l: { t: (r[2].items || []).map(slimT), a: (r[3].items || []).map(slimA) }
@@ -993,20 +1012,26 @@ async function collect(st, opts = {}) {
     cfg.err = null;
     cfg.errMsg = "";
     cfg.lastRun = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: true, added: m.added };
   } catch (e) {
     cfg.err = e.code === "http403" ? "forbidden" : "fetch";
     cfg.errMsg = e.message;
     cfg.errAt = Date.now();
-    await st.setJSON("config", cfg);
+    await st.setJSON(K(userId, "config"), cfg);
     return { ok: false, reason: cfg.err };
   }
+}
+async function collectAll(st) {
+  await migrate(st);
+  const out = await st.list({ prefix: "u/" });
+  const ids = (out.blobs || []).map((b) => b.key).filter((k) => k.endsWith("/config")).map((k) => k.slice(2, -7));
+  return Promise.all(ids.map((id) => collect(st, id).catch(() => ({ ok: false }))));
 }
 
 // src/collect.mjs
 var collect_default = async () => {
-  await collect(store());
+  await collectAll(store());
 };
 var config = { schedule: "*/30 * * * *" };
 export {
