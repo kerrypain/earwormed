@@ -329,7 +329,7 @@ a.chip:hover{border-color:var(--accent)}
     }).then(function (j) {
       set("lw_hist", j.hist || []); set("lw_gaps", j.gaps || []);
       if (j.top) set("lw_cache", j.top);
-      st.srvErr = j.err || null;
+      st.srvErr = j.err || null; st.lastRun = j.lastRun || 0;
       st.status = "ready"; st.err = null; st.updated = Date.now(); render();
     }).catch(function (e) {
       st.err = e; st.status = "error"; render();
@@ -602,9 +602,16 @@ a.chip:hover{border-color:var(--accent)}
     );
   }
 
+  function lastCheckedText(ts) {
+    var d = new Date(ts), now = new Date(), mins = Math.max(0, Math.round((now - d) / 60000));
+    var hm = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    var when = isoLocal(d) === isoLocal(now) ? hm : fmtDay(d) + " " + hm;
+    var ago = mins < 1 ? "just now" : mins < 60 ? mins + " min ago" : Math.floor(mins / 60) + " h ago";
+    return "Last checked " + when + " (" + ago + ")";
+  }
   function dashView() {
     var frag = document.createDocumentFragment();
-    var sub = st.status === "loading" ? "Reading your Spotify…" : (st.updated ? "Updated " + new Date(st.updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "Spotify listening, on this device");
+    var sub = st.status === "loading" ? "Reading your Spotify…" : (srvKey() && st.lastRun ? lastCheckedText(st.lastRun) : st.updated ? "Updated " + new Date(st.updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "Spotify listening, on this device");
     frag.appendChild(h("header", null,
       h("div", null, h("h1", { text: "Earwormed" }), h("p", { class: "sub", text: sub })),
       h("div", { class: "hbtns" },
