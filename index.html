@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Earwormed</title>
+<meta name="description" content="Your Spotify week, month and year in one place. See what got stuck in your head.">
+<meta name="theme-color" content="#F3F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F0E15" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Earwormed">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one narrow column. A flat colour block per period leads, then stat tiles, charts and ranked lists. */
+:root{
+  color-scheme:light dark;
+  --bg:#F3F2F7; --surface:#FFFFFF; --line:#DCD9E6; --grid:#E6E3EE;
+  --fg:#16141F; --muted:#625C74; --base-bar:#B9B4C8;
+  --week:#D6246E; --month:#2F5BE0; --year:#0E7C66;
+  --week-a:#C41E63; --month-a:#2F5BE0; --year-a:#0E7C66;
+  --warn-bg:#FFF1D6; --warn-fg:#6B4200;
+  --accent:var(--week-a); --hero:var(--week);
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"Hanken Grotesk",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0F0E15; --surface:#1A1823; --line:#2C2938; --grid:#262331;
+    --fg:#F1EFF7; --muted:#A39EB5; --base-bar:#4A455C;
+    --week-a:#F2619A; --month-a:#86A2FF; --year-a:#45CDAA;
+    --warn-bg:#3A2C10; --warn-fg:#FFD58A;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.45 var(--f-body);
+  padding-top:max(20px,env(safe-area-inset-top,0px));
+  padding-bottom:max(48px,env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+#app{max-width:600px;margin:0 auto;display:grid;gap:14px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:4px 0 2px}
+h1{font:800 36px/1 var(--f-display);letter-spacing:.01em;text-transform:uppercase;margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:8px 0 0;font-size:13px}
+.hbtns{display:flex;gap:6px;flex:none}
+.sbtn{min-height:40px;padding:0 13px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;font:600 13px var(--f-body);cursor:pointer}
+.btn{min-height:48px;padding:0 20px;border:0;background:var(--fg);color:var(--bg);border-radius:12px;font:700 15px var(--f-body);cursor:pointer;width:100%}
+.btn.ghost{background:none;color:var(--fg);border:1px solid var(--line)}
+.btn.warn{background:#B3261E;color:#fff}
+.tabs{display:flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.tabs button{flex:1;min-height:44px;border:0;background:none;color:var(--muted);font:600 14px var(--f-body);border-radius:9px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--fg);color:var(--bg)}
+button:focus-visible,a:focus-visible,input:focus-visible,.col:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#view{display:grid;gap:14px;min-width:0}
+#view[data-p="week"]{--accent:var(--week-a);--hero:var(--week)}
+#view[data-p="month"]{--accent:var(--month-a);--hero:var(--month)}
+#view[data-p="year"]{--accent:var(--year-a);--hero:var(--year)}
+
+.hero{background:var(--hero);color:#fff;border-radius:16px;padding:22px 20px 20px;min-width:0}
+.hero .k{font:700 12px var(--f-body);letter-spacing:.12em;text-transform:uppercase}
+.hero .big{font:800 46px/.98 var(--f-display);text-transform:uppercase;margin:10px 0 6px;overflow-wrap:anywhere;text-wrap:balance}
+.hero .by{font-size:16px;font-weight:500}
+.hero .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{background:rgba(0,0,0,.24);color:#fff;border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;text-decoration:none;display:inline-block}
+a.pill:hover{background:rgba(0,0,0,.36)}
+.hero a:focus-visible{outline-color:#fff}
+
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+.tile b{display:block;font:800 36px/1 var(--f-display);font-variant-numeric:tabular-nums}
+.tile span{display:block;margin-top:4px;font-size:12px;color:var(--muted)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;min-width:0}
+h2{font:700 12px var(--f-body);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0}
+.chead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:14px}
+.peak{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+.chart{position:relative;padding-top:8px}
+.bars{display:grid;gap:3px;height:140px;align-items:end;border-bottom:1px solid var(--line);background:linear-gradient(var(--grid),var(--grid)) 0 0/100% 1px no-repeat}
+.col{display:flex;align-items:flex-end;height:140px;border-radius:4px 4px 0 0}
+.col:hover,.col:focus-visible{background:var(--grid)}
+.bar{width:100%;background:var(--accent);border-radius:4px 4px 0 0}
+.bar.zero{border-radius:0}
+.labs{display:grid;gap:3px;margin-top:6px}
+.lab{text-align:center;font-size:11px;line-height:1.25;color:var(--muted);font-variant-numeric:tabular-nums;min-width:0}
+.lab span{display:block;min-height:13px}
+.tip{position:absolute;top:0;transform:translate(-50%,-100%);background:var(--fg);color:var(--bg);font-size:12px;font-weight:600;padding:6px 9px;border-radius:7px;pointer-events:none;width:max-content;max-width:min(260px,100%);text-align:center;z-index:2}
+[hidden]{display:none!important}
+
+.hrows{display:grid;gap:9px;margin-top:2px}
+.hrow{display:grid;grid-template-columns:64px minmax(0,1fr) 28px;gap:10px;align-items:center;font-size:13px;font-variant-numeric:tabular-nums}
+.hrow .m{height:10px;border-radius:5px;background:var(--grid);overflow:hidden}
+.hrow .m i{display:block;height:100%;background:var(--accent);border-radius:5px}
+.hrow .n{text-align:right;color:var(--muted)}
+
+.rows{list-style:none;margin:10px 0 0;padding:0}
+.rows li{border-top:1px solid var(--line)}
+.rows li:first-child{border-top:0}
+.row{display:grid;grid-template-columns:24px 44px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 0;color:inherit;text-decoration:none}
+a.row:hover .t b{text-decoration:underline}
+.rk{font:800 22px/1 var(--f-display);color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+.cov{width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--grid);display:block}
+.cov.round{border-radius:50%}
+.t{min-width:0}
+.t b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t span{display:block;font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:7px 13px;font-size:14px;font-weight:600;color:var(--fg);text-decoration:none;background:var(--bg)}
+a.chip:hover{border-color:var(--accent)}
+
+.setup h2.big{font:800 28px/1.05 var(--f-display);text-transform:uppercase;color:var(--fg);letter-spacing:0;margin:0 0 6px}
+.setup p{margin:8px 0 0;color:var(--muted)}
+.setup ol{margin:14px 0 0;padding-left:20px;display:grid;gap:10px}
+.setup li{padding-left:4px}
+.setup code,.uri{font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px;display:block;margin-top:6px;overflow-wrap:anywhere;user-select:all}
+.setup input{width:100%;min-height:48px;margin-top:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:10px;padding:0 12px;font:500 15px ui-monospace,SFMono-Regular,Menlo,monospace}
+.setup .btn{margin-top:12px}
+.stack{display:grid;gap:10px;margin-top:14px}
+.banner{background:var(--warn-bg);color:var(--warn-fg);border-radius:12px;padding:12px 14px;font-size:14px}
+.banner button{margin-top:8px}
+.note{font-size:12.5px;color:var(--muted);margin:2px 2px 0;max-width:60ch}
+.empty strong{display:block;font:800 26px/1.05 var(--f-display);text-transform:uppercase}
+.empty p{margin:8px 0 0;color:var(--muted);max-width:52ch}
+.link{color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<div id="app"><section class="card"><h2>Loading</h2></section></div>
+
+<script>
+(function () {
+  "use strict";
+  var PERIODS = { week: "Week", month: "Month", year: "Year" };
+  var REDIR = location.origin + "/";
+  var SCOPES = "user-read-recently-played user-top-read";
+  var HIST_CAP = 8000;
+  var st = { tab: "week", status: "idle", err: null, settings: false, confirm: "", updated: 0 };
+  var app = document.getElementById("app");
+
+  /* ---------- small helpers ---------- */
+  function get(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  function E(code, msg) { var e = new Error(msg || code); e.code = code; return e; }
+  function h(tag, props) {
+    var el = document.createElement(tag), k, v, i, c;
+    if (props) {
+      for (k in props) {
+        v = props[k];
+        if (v == null || v === false) continue;
+        if (k === "class") el.className = v;
+        else if (k === "text") el.textContent = v;
+        else if (k.slice(0, 2) === "on") el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? "" : v);
+      }
+    }
+    for (i = 2; i < arguments.length; i++) {
+      c = arguments[i];
+      if (c == null || c === false) continue;
+      el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    }
+    return el;
+  }
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
+  function isoLocal(d) { return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()); }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+  function fmtDay(d) { return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
+  function cid() { return get("lw_cid", ""); }
+  function srvKey() { return get("lw_srv", ""); }
+  function signedIn() { return !!(get("lw_tok", null) || srvKey()); }
+  function srvPost(path) {
+    var k = srvKey();
+    if (!k) return Promise.resolve();
+    return fetch("/api/" + path, { method: "POST", headers: { "x-key": k } }).catch(function () {});
+  }
+  function enroll(refresh) {
+    /* Hand the sign-in to the server so it can log plays in the background. Falls back to on-device mode if the server isn't there. */
+    var a = new Uint8Array(24), key = "", i;
+    crypto.getRandomValues(a);
+    for (i = 0; i < a.length; i++) key += (a[i] < 16 ? "0" : "") + a[i].toString(16);
+    if (!refresh) return Promise.resolve(false);
+    return fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: key, cid: cid(), refresh: refresh }) })
+      .then(function (r) {
+        if (r.ok) { set("lw_srv", key); del("lw_tok"); return true; }
+        if (r.status === 403) st.err = E("denied", "Another device is already linked to this Earwormed site with a different Spotify account. Using on-device tracking instead.");
+        return false;
+      }).catch(function () { return false; });
+  }
+  function trackUrl(id) { return /^[A-Za-z0-9]{22}$/.test(id || "") ? "https://open.spotify.com/track/" + id : null; }
+  function artistUrl(id) { return /^[A-Za-z0-9]{22}$/.test(id || "") ? "https://open.spotify.com/artist/" + id : null; }
+
+  /* ---------- Spotify sign-in (Authorization Code with PKCE) ---------- */
+  function randStr(n) {
+    var cs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~", a = new Uint8Array(n), o = "", i;
+    crypto.getRandomValues(a);
+    for (i = 0; i < n; i++) o += cs.charAt(a[i] % cs.length);
+    return o;
+  }
+  function sha256b64(s) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)).then(function (d) {
+      var b = new Uint8Array(d), t = "", i;
+      for (i = 0; i < b.length; i++) t += String.fromCharCode(b[i]);
+      return btoa(t).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    });
+  }
+  function connect() {
+    var v = randStr(64), s = randStr(16);
+    set("lw_v", v); set("lw_s", s);
+    sha256b64(v).then(function (ch) {
+      var q = new URLSearchParams({
+        client_id: cid(), response_type: "code", redirect_uri: REDIR, scope: SCOPES,
+        code_challenge_method: "S256", code_challenge: ch, state: s
+      });
+      location.assign("https://accounts.spotify.com/authorize?" + q.toString());
+    });
+  }
+  function tokenReq(body) {
+    return fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body).toString()
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw E("token", (j.error_description || j.error || String(r.status)));
+        return j;
+      });
+    });
+  }
+  function saveTok(j, old) {
+    set("lw_tok", { a: j.access_token, r: j.refresh_token || (old && old.r) || "", e: Date.now() + (j.expires_in || 3600) * 1000 - 60000 });
+  }
+  function handleCallback() {
+    var p = new URLSearchParams(location.search);
+    if (!p.has("code") && !p.has("error")) return Promise.resolve(false);
+    var code = p.get("code"), state = p.get("state"), error = p.get("error");
+    try { history.replaceState(null, "", location.pathname + location.hash); } catch (e) {}
+    if (error) { st.err = E("denied", "Spotify sign-in was cancelled or refused (" + error + ")."); return Promise.resolve(true); }
+    if (state !== get("lw_s", "")) { st.err = E("state", "That sign-in didn't match this device. Tap Connect Spotify to try again."); return Promise.resolve(true); }
+    return tokenReq({ grant_type: "authorization_code", code: code, redirect_uri: REDIR, client_id: cid(), code_verifier: get("lw_v", "") })
+      .then(function (j) { saveTok(j, null); del("lw_v"); del("lw_s"); return enroll(j.refresh_token).then(function () { return true; }); })
+      .catch(function (e) { st.err = E("token", "Couldn't finish signing in to Spotify (" + e.message + ")."); return true; });
+  }
+  var refreshing = null;
+  function ensureToken() {
+    var t = get("lw_tok", null);
+    if (!t) return Promise.reject(E("signed-out"));
+    if (Date.now() < t.e) return Promise.resolve(t.a);
+    if (!refreshing) {
+      refreshing = tokenReq({ grant_type: "refresh_token", refresh_token: t.r, client_id: cid() })
+        .then(function (j) { saveTok(j, t); refreshing = null; return get("lw_tok", {}).a; })
+        .catch(function (e) { refreshing = null; del("lw_tok"); throw E("signed-out", e.message); });
+    }
+    return refreshing;
+  }
+  function api(path, retried) {
+    return ensureToken().then(function (tok) {
+      return fetch("https://api.spotify.com/v1" + path, { headers: { Authorization: "Bearer " + tok } });
+    }).then(function (r) {
+      if (r.status === 401 && !retried) {
+        var t = get("lw_tok", null);
+        if (t) { t.e = 0; set("lw_tok", t); }
+        return api(path, true);
+      }
+      if (r.status === 429) throw E("rate");
+      if (r.status === 403) throw E("forbidden");
+      if (!r.ok) throw E("http", "Spotify answered " + r.status);
+      return r.json();
+    });
+  }
+
+  /* ---------- data ---------- */
+  function pickImg(images) {
+    var a = (images || []).filter(function (x) { return x && x.url; }).sort(function (x, y) { return (x.width || 0) - (y.width || 0); }), i;
+    for (i = 0; i < a.length; i++) if ((a[i].width || 0) >= 60) return a[i].url;
+    return a.length ? a[a.length - 1].url : "";
+  }
+  function slimT(x) {
+    var ar = x.artists || [], al = x.album || {}, y = parseInt(String(al.release_date || "").slice(0, 4), 10);
+    return {
+      id: x.id, n: x.name || "", a: ar.map(function (q) { return q.name; }).join(", "), a1: ar[0] ? ar[0].name : "",
+      au: ar[0] ? ar[0].id : "", d: x.duration_ms || 0, i: pickImg(al.images), y: isNaN(y) ? 0 : y
+    };
+  }
+  function slimA(x) { return { id: x.id, n: x.name || "", i: pickImg(x.images) }; }
+
+  function merge(items) {
+    var hist = get("lw_hist", []), seen = {}, added = [], latest = hist.length ? hist[hist.length - 1].p : "", oldest = "";
+    hist.forEach(function (r) { seen[r.p + "|" + r.t] = 1; });
+    items.forEach(function (it) {
+      if (!it || !it.track || !it.track.id || !it.played_at) return;
+      if (!oldest || it.played_at < oldest) oldest = it.played_at;
+      var k = it.played_at + "|" + it.track.id;
+      if (seen[k]) return;
+      seen[k] = 1;
+      var s = slimT(it.track);
+      added.push({ p: it.played_at, t: s.id, n: s.n, a: s.a, a1: s.a1, au: s.au, d: s.d, i: s.i, y: s.y });
+    });
+    if (hist.length && items.length >= 50 && oldest > latest) {
+      var gaps = get("lw_gaps", []);
+      gaps.push({ from: latest, to: oldest });
+      set("lw_gaps", gaps.slice(-20));
+    }
+    if (added.length) {
+      hist = hist.concat(added).sort(function (a, b) { return a.p < b.p ? -1 : a.p > b.p ? 1 : 0; });
+      if (hist.length > HIST_CAP) hist = hist.slice(hist.length - HIST_CAP);
+      set("lw_hist", hist);
+    }
+    return added.length;
+  }
+
+  function loadServer(force) {
+    st.status = "loading"; render();
+    return fetch("/api/data" + (force ? "?refresh=1" : ""), { headers: { "x-key": srvKey() }, cache: "no-store" }).then(function (r) {
+      if (r.status === 401) { del("lw_srv"); throw E("signed-out"); }
+      if (!r.ok) throw E("http", "Earwormed's server answered " + r.status);
+      return r.json();
+    }).then(function (j) {
+      set("lw_hist", j.hist || []); set("lw_gaps", j.gaps || []);
+      if (j.top) set("lw_cache", j.top);
+      st.srvErr = j.err || null;
+      st.status = "ready"; st.err = null; st.updated = Date.now(); render();
+    }).catch(function (e) {
+      st.err = e; st.status = "error"; render();
+    });
+  }
+  function load(force) {
+    if (srvKey()) return loadServer(force);
+    st.status = "loading"; render();
+    return ensureToken().then(function () {
+      return api("/me/player/recently-played?limit=50");
+    }).then(function (rec) {
+      merge(rec.items || []);
+      var c = get("lw_cache", null);
+      if (!force && c && Date.now() - c.ts < 3600000) return;
+      return Promise.all([
+        api("/me/top/tracks?time_range=short_term&limit=50"),
+        api("/me/top/artists?time_range=short_term&limit=50"),
+        api("/me/top/tracks?time_range=long_term&limit=50"),
+        api("/me/top/artists?time_range=long_term&limit=50")
+      ]).then(function (r) {
+        set("lw_cache", {
+          ts: Date.now(),
+          s: { t: (r[0].items || []).map(slimT), a: (r[1].items || []).map(slimA) },
+          l: { t: (r[2].items || []).map(slimT), a: (r[3].items || []).map(slimA) }
+        });
+      });
+    }).then(function () {
+      st.status = "ready"; st.err = null; st.updated = Date.now(); render();
+    }).catch(function (e) {
+      st.err = e; st.status = "error"; render();
+    });
+  }
+
+  /* ---------- week stats from the on-device history ---------- */
+  function weekData() {
+    var hist = get("lw_hist", []), now = new Date();
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+    var plays = hist.filter(function (r) { return Date.parse(r.p) >= start.getTime(); });
+    var days = [], i, d, counts = {}, hours = [], tm = {}, am = {}, mins = 0;
+    for (i = 0; i < 24; i++) hours.push(0);
+    plays.forEach(function (r) {
+      var dt = new Date(r.p), k = isoLocal(dt);
+      counts[k] = (counts[k] || 0) + 1;
+      hours[dt.getHours()]++;
+      mins += (r.d || 0) / 60000;
+      var x = tm[r.t];
+      if (!x) x = tm[r.t] = { t: r.t, n: r.n, a: r.a, i: r.i, c: 0, last: "" };
+      x.c++; if (r.p > x.last) x.last = r.p;
+      var ak = r.au || r.a1 || r.a, y = am[ak];
+      if (!y) y = am[ak] = { id: r.au, n: r.a1 || r.a, i: r.i, c: 0, last: "" };
+      y.c++; if (r.p > y.last) y.last = r.p;
+    });
+    for (i = 0; i < 7; i++) {
+      d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      days.push({ date: d, n: counts[isoLocal(d)] || 0 });
+    }
+    function cmp(a, b) { return b.c - a.c || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); }
+    var tracks = Object.keys(tm).map(function (k) { return tm[k]; }).sort(cmp);
+    var artists = Object.keys(am).map(function (k) { return am[k]; }).sort(cmp);
+    var peak = -1, pc = 0;
+    hours.forEach(function (n, hr) { if (n > pc) { pc = n; peak = hr; } });
+    return { hist: hist, plays: plays, days: days, hours: hours, tracks: tracks, artists: artists, mins: Math.round(mins), peak: peak, start: start };
+  }
+
+  /* ---------- views ---------- */
+  function copyText(txt, btn) {
+    var done = function () { var o = btn.textContent; btn.textContent = "Copied"; setTimeout(function () { btn.textContent = o; }, 1500); };
+    try { navigator.clipboard.writeText(txt).then(done, function () {}); } catch (e) {}
+  }
+  function setupView() {
+    var input = h("input", { id: "cid", type: "text", placeholder: "Paste your Client ID", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Spotify Client ID", value: cid() });
+    var copy = h("button", { class: "sbtn", type: "button", text: "Copy address" });
+    copy.addEventListener("click", function () { copyText(REDIR, copy); });
+    var err = st.err && (st.err.code === "denied" || st.err.code === "state" || st.err.code === "token") ? h("div", { class: "banner", text: st.err.message }) : null;
+    return h("section", { class: "card setup" },
+      h("h2", { class: "big", text: "Set up your Spotify link" }),
+      h("p", { text: "This app reads your listening straight from Spotify and keeps everything on this device. It needs a free Spotify developer app, which takes about five minutes." }),
+      err,
+      h("ol", null,
+        h("li", null, "Open ", h("a", { class: "link", href: "https://developer.spotify.com/dashboard", target: "_blank", rel: "noopener", text: "developer.spotify.com/dashboard" }), " and create an app. Choose Web API when it asks which APIs you plan to use."),
+        h("li", null, "Add this as a Redirect URI, exactly as shown:", h("span", { class: "uri", text: REDIR }), h("div", { class: "stack", style: "margin-top:8px" }, copy)),
+        h("li", null, "Copy the app's Client ID and paste it here.", input)
+      ),
+      h("button", { class: "btn", type: "button", text: "Save and continue", onclick: function () {
+        var v = input.value.trim();
+        if (!/^[A-Za-z0-9]{20,64}$/.test(v)) { input.setCustomValidity("Check the Client ID"); input.reportValidity && input.reportValidity(); input.setCustomValidity(""); return; }
+        set("lw_cid", v); st.err = null; render();
+      } }),
+      h("p", { class: "note", text: "Spotify currently requires the person who owns a developer app to have Premium, and limits new apps to five users. Your Client ID is not secret, and no password is stored." })
+    );
+  }
+  function connectView() {
+    var err = st.err && st.err.code !== "signed-out" ? h("div", { class: "banner", text: st.err.message }) : null;
+    return h("section", { class: "card setup" },
+      h("h2", { class: "big", text: "Connect Spotify" }),
+      h("p", { text: "Sign in once to let Earwormed read your recent plays and top tracks and artists. It can't change anything in your account." }),
+      h("p", { text: "Earwormed's server then checks your recent plays every 30 minutes, so nothing is missed while the app is closed. To do that it keeps a Spotify access key on your Netlify site. Settings > Sign out removes it." }),
+      err,
+      h("div", { class: "stack" },
+        h("button", { class: "btn", type: "button", text: "Connect Spotify", onclick: connect }),
+        h("button", { class: "btn ghost", type: "button", text: "Change Client ID", onclick: function () { del("lw_cid"); st.err = null; render(); } })
+      )
+    );
+  }
+
+  function errText(e) {
+    if (!e) return "";
+    if (e.code === "forbidden") return "Spotify refused the request. For a new developer app this usually means your account isn't on its user list yet. In the Spotify dashboard, open your app, go to User management and add your Spotify email, and check the app owner has Premium.";
+    if (e.code === "rate") return "Spotify is limiting requests from this app right now. Try again in a minute.";
+    if (e.code === "http") return "Spotify returned an error. " + e.message + ".";
+    return "Couldn't load your data. Check your connection and try again.";
+  }
+
+  function bars(items, opts) {
+    var max = 1, H = 132;
+    items.forEach(function (x) { if (x.v > max) max = x.v; });
+    var wrap = h("div", { class: "chart" }), tip = h("div", { class: "tip", hidden: true });
+    var b = h("div", { class: "bars" }), labs = h("div", { class: "labs" });
+    var cols = "repeat(" + items.length + ",minmax(0,1fr))";
+    b.style.gridTemplateColumns = cols; labs.style.gridTemplateColumns = cols;
+    function show(el, txt) {
+      tip.textContent = txt; tip.hidden = false;
+      var wr = wrap.getBoundingClientRect(), er = el.getBoundingClientRect(), half = tip.offsetWidth / 2;
+      var x = er.left + er.width / 2 - wr.left;
+      tip.style.left = Math.max(half + 2, Math.min(wr.width - half - 2, x)) + "px";
+    }
+    items.forEach(function (x) {
+      var col = h("div", { class: "col", tabindex: "0", role: "img", "aria-label": x.tip });
+      var bar = h("div", { class: "bar" });
+      if (x.v > 0) bar.style.height = Math.max(4, Math.round(x.v / max * H)) + "px";
+      else { bar.className = "bar zero"; bar.style.height = "2px"; }
+      col.appendChild(bar);
+      col.addEventListener("pointerenter", function () { show(col, x.tip); });
+      col.addEventListener("pointerleave", function () { tip.hidden = true; });
+      col.addEventListener("focus", function () { show(col, x.tip); });
+      col.addEventListener("blur", function () { tip.hidden = true; });
+      b.appendChild(col);
+      labs.appendChild(h("div", { class: "lab" }, h("span", { text: x.lab || "" }), h("span", { text: x.sub || "" })));
+    });
+    wrap.appendChild(tip); wrap.appendChild(b); wrap.appendChild(labs);
+    return wrap;
+  }
+  function cardWith(title, right, body) {
+    return h("section", { class: "card" }, h("div", { class: "chead" }, h("h2", { text: title }), right ? h("span", { class: "peak", text: right }) : null), body);
+  }
+  function stat(v, l) { return h("div", { class: "tile" }, h("b", { text: String(v) }), h("span", { text: l })); }
+  function cover(url, name, round) {
+    return url ? h("img", { class: "cov" + (round ? " round" : ""), src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })
+      : h("div", { class: "cov" + (round ? " round" : "") });
+  }
+  function rowItem(i, img, title, sub, badge, href, round) {
+    var inner = [
+      h("div", { class: "rk", text: String(i + 1) }),
+      cover(img, title, round),
+      h("div", { class: "t" }, h("b", { text: title }), h("span", { text: sub })),
+      badge ? h("div", { class: "badge", text: badge }) : h("span")
+    ];
+    var row = h(href ? "a" : "div", { class: "row", href: href, target: href ? "_blank" : null, rel: href ? "noopener" : null });
+    inner.forEach(function (n) { row.appendChild(n); });
+    return h("li", null, row);
+  }
+  function hero(label, name, by, pillText, href) {
+    var meta = h("div", { class: "meta" }, pillText ? h("span", { class: "pill", text: pillText }) : null,
+      href ? h("a", { class: "pill", href: href, target: "_blank", rel: "noopener", text: "Open in Spotify" }) : null);
+    return h("section", { class: "hero" }, h("div", { class: "k", text: label }), h("div", { class: "big", text: name }), h("div", { class: "by", text: by }), meta);
+  }
+  function emptyCard(title, body) { return h("section", { class: "card empty" }, h("strong", { text: title }), h("p", { text: body })); }
+
+  function weekView() {
+    var w = weekData(), out = [];
+    if (!w.plays.length) {
+      out.push(emptyCard("No plays logged yet", "Spotify only shares your last 50 plays, so this tab builds up from the moment you first connect. Play something, then tap Refresh."));
+      return out;
+    }
+    var top = w.tracks[0];
+    out.push(hero("Most played · last 7 days", top.n, top.a, plural(top.c, "play"), trackUrl(top.t)));
+    out.push(h("div", { class: "tiles" },
+      stat(w.plays.length, "plays logged"), stat(w.mins, "minutes (estimate)"),
+      stat(w.artists.length, "different artists"), stat(w.peak >= 0 ? p2(w.peak) + ":00" : "-", "busiest hour")));
+    var dayItems = w.days.map(function (x) {
+      return { v: x.n, lab: "SMTWTFS".charAt(x.date.getDay()), sub: String(x.date.getDate()), tip: fmtDay(x.date) + " · " + plural(x.n, "play") };
+    });
+    var maxDay = 0; dayItems.forEach(function (x) { if (x.v > maxDay) maxDay = x.v; });
+    out.push(cardWith("Plays per day", "Peak " + maxDay, bars(dayItems)));
+    var hrItems = w.hours.map(function (n, hr) {
+      return { v: n, lab: hr % 6 === 0 ? String(hr) : "", sub: "", tip: p2(hr) + ":00 · " + plural(n, "play") };
+    });
+    out.push(cardWith("When you listen", "Hour of day", bars(hrItems)));
+    var tl = h("ol", { class: "rows" });
+    w.tracks.slice(0, 10).forEach(function (x, i) { tl.appendChild(rowItem(i, x.i, x.n, x.a, plural(x.c, "play"), trackUrl(x.t))); });
+    out.push(h("section", { class: "card" }, h("h2", { text: "Most played tracks" }), tl));
+    var al = h("ol", { class: "rows" });
+    w.artists.slice(0, 8).forEach(function (x, i) { al.appendChild(rowItem(i, x.i, x.n, "", plural(x.c, "play"), artistUrl(x.id))); });
+    out.push(h("section", { class: "card" }, h("h2", { text: "Most played artists" }), al));
+    var first = w.hist.length ? new Date(w.hist[0].p) : null;
+    var note = (srvKey() ? "Earwormed checks Spotify for you every 30 minutes, even when the app is closed, and saves your plays" : "Spotify only shares your last 50 plays, so the app saves them on this device each time you open it") + (first ? " (logging since " + fmtDay(first) + ")" : "") + ". Minutes assume each play ran its full length.";
+    var gaps = get("lw_gaps", []).filter(function (g) { return Date.parse(g.to) >= w.start.getTime(); });
+    if (gaps.length) {
+      var g = gaps[gaps.length - 1];
+      note += " Some plays between " + fmtDay(new Date(g.from)) + " and " + fmtDay(new Date(g.to)) + " weren't captured, because more than 50 tracks played between checks.";
+    }
+    out.push(h("p", { class: "note", text: note }));
+    return out;
+  }
+
+  function topView(key) {
+    var c = get("lw_cache", null), out = [];
+    if (!c || !c[key] || !c[key].t.length) {
+      out.push(emptyCard(st.status === "loading" ? "Loading" : "Nothing yet", st.status === "loading" ? "Reading your top tracks and artists from Spotify." : "Spotify hasn't returned top tracks for this period yet. Listen a little more, then refresh."));
+      return out;
+    }
+    var D = c[key], tracks = D.t, artists = D.a, isMonth = key === "s";
+    var t0 = tracks[0], hrs = 0, ay = {}, yrs = [], thisYear = new Date().getFullYear(), recent = 0, dec = {};
+    tracks.forEach(function (x) {
+      hrs += x.d; ay[x.au || x.a1] = 1;
+      if (x.y) { yrs.push(x.y); if (x.y >= thisYear) recent++; var dk = Math.floor(x.y / 10) * 10; dec[dk] = (dec[dk] || 0) + 1; }
+    });
+    var avg = yrs.length ? Math.round(yrs.reduce(function (a, b) { return a + b; }, 0) / yrs.length) : "-";
+    out.push(hero("Your #1 · " + (isMonth ? "last 4 weeks" : "last 12 months"), t0.n, t0.a, "Top of " + plural(tracks.length, "ranked track"), trackUrl(t0.id)));
+    out.push(h("div", { class: "tiles" },
+      stat(Math.round(hrs / 3600000), "hours in your top " + tracks.length), stat(Object.keys(ay).length, "different artists"),
+      stat(recent, "released in " + thisYear), stat(avg, "average release year")));
+    var dkeys = Object.keys(dec).map(Number).sort(function (a, b) { return b - a; }), dmax = 1;
+    dkeys.forEach(function (k) { if (dec[k] > dmax) dmax = dec[k]; });
+    if (dkeys.length) {
+      var dr = h("div", { class: "hrows" });
+      dkeys.forEach(function (k) {
+        var m = h("i"); m.style.width = Math.max(4, Math.round(dec[k] / dmax * 100)) + "%";
+        dr.appendChild(h("div", { class: "hrow" }, h("span", { text: k + "s" }), h("div", { class: "m" }, m), h("span", { class: "n", text: String(dec[k]) })));
+      });
+      out.push(cardWith("Your top tracks by decade", "", dr));
+    }
+    var tl = h("ol", { class: "rows" });
+    tracks.slice(0, 10).forEach(function (x, i) { tl.appendChild(rowItem(i, x.i, x.n, x.a, "", trackUrl(x.id))); });
+    out.push(h("section", { class: "card" }, h("h2", { text: "Top tracks" }), tl));
+    var al = h("ol", { class: "rows" });
+    artists.slice(0, 10).forEach(function (x, i) { al.appendChild(rowItem(i, x.i, x.n, "", "", artistUrl(x.id), true)); });
+    out.push(h("section", { class: "card" }, h("h2", { text: "Top artists" }), al));
+    var other = c[isMonth ? "l" : "s"], otherIds = {}, picks = [];
+    (other.a || []).forEach(function (x) { otherIds[x.id] = 1; });
+    if (isMonth) artists.slice(0, 20).forEach(function (x) { if (!otherIds[x.id]) picks.push(x); });
+    else artists.slice(0, 10).forEach(function (x) { if (otherIds[x.id]) picks.push(x); });
+    if (picks.length) {
+      var chips = h("div", { class: "chips" });
+      picks.forEach(function (x) { var u = artistUrl(x.id); chips.appendChild(h(u ? "a" : "span", { class: "chip", href: u, target: u ? "_blank" : null, rel: u ? "noopener" : null, text: x.n })); });
+      out.push(h("section", { class: "card" }, h("h2", { text: isMonth ? "New in your rotation" : "Still in heavy rotation" }), chips));
+    }
+    out.push(h("p", { class: "note", text: "Spotify ranks your top tracks and artists but doesn't share play counts. This view covers " + (isMonth ? "about the last four weeks" : "about the last twelve months") + "." }));
+    return out;
+  }
+
+  function settingsCard() {
+    function confirmBtn(id, label, action) {
+      var armed = st.confirm === id;
+      return h("button", { class: "btn " + (armed ? "warn" : "ghost"), type: "button", text: armed ? "Tap again to confirm" : label, onclick: function () {
+        if (armed) { st.confirm = ""; action(); } else { st.confirm = id; render(); }
+      } });
+    }
+    return h("section", { class: "card setup" },
+      h("h2", { class: "big", text: "Settings" }),
+      h("p", { text: "Redirect address for your Spotify app:" }), h("span", { class: "uri", text: REDIR }),
+      h("p", { text: "Client ID:" }), h("span", { class: "uri", text: cid() }),
+      h("div", { class: "stack" },
+        confirmBtn("signout", "Sign out of Spotify", function () { srvPost("unregister").then(function () { del("lw_srv"); del("lw_tok"); st.settings = false; render(); }); }),
+        confirmBtn("history", "Clear saved play history", function () { srvPost("clear").then(function () { del("lw_hist"); del("lw_gaps"); st.settings = false; render(); }); }),
+        confirmBtn("cid", "Change Client ID", function () { srvPost("unregister").then(function () { del("lw_srv"); del("lw_tok"); del("lw_cid"); st.settings = false; render(); }); }),
+        h("button", { class: "btn ghost", type: "button", text: "Close", onclick: function () { st.settings = false; st.confirm = ""; render(); } })
+      )
+    );
+  }
+
+  function dashView() {
+    var frag = document.createDocumentFragment();
+    var sub = st.status === "loading" ? "Reading your Spotify…" : (st.updated ? "Updated " + new Date(st.updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "Spotify listening, on this device");
+    frag.appendChild(h("header", null,
+      h("div", null, h("h1", { text: "Earwormed" }), h("p", { class: "sub", text: sub })),
+      h("div", { class: "hbtns" },
+        h("button", { class: "sbtn", type: "button", text: "Refresh", onclick: function () { load(true); } }),
+        h("button", { class: "sbtn", type: "button", text: "Settings", onclick: function () { st.settings = !st.settings; st.confirm = ""; render(); } }))));
+    if (st.settings) { frag.appendChild(settingsCard()); return frag; }
+    if (srvKey() && st.srvErr) {
+      frag.appendChild(h("div", { class: "banner", role: "alert" }, "Background tracking has stopped because Spotify no longer accepts the saved sign-in. Reconnect to resume. Plays from the gap can't be recovered beyond Spotify's last 50.",
+        h("div", null, h("button", { class: "sbtn", type: "button", text: "Reconnect", onclick: function () { del("lw_srv"); st.srvErr = null; st.err = null; render(); } }))));
+    }
+    if (st.status === "error" && st.err) {
+      frag.appendChild(h("div", { class: "banner", role: "alert" }, errText(st.err), h("div", null, h("button", { class: "sbtn", type: "button", text: "Try again", onclick: function () { load(false); } }))));
+    }
+    var tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Time period" });
+    Object.keys(PERIODS).forEach(function (k) {
+      tabs.appendChild(h("button", { type: "button", role: "tab", "aria-selected": st.tab === k ? "true" : "false", text: PERIODS[k], onclick: function () {
+        st.tab = k; try { location.hash = k; } catch (e) {} render();
+      } }));
+    });
+    frag.appendChild(tabs);
+    var view = h("div", { id: "view", "data-p": st.tab, role: "tabpanel" });
+    var parts = st.tab === "week" ? weekView() : topView(st.tab === "month" ? "s" : "l");
+    parts.forEach(function (n) { view.appendChild(n); });
+    frag.appendChild(view);
+    return frag;
+  }
+
+  function render() {
+    while (app.firstChild) app.removeChild(app.firstChild);
+    if (!cid()) { app.appendChild(setupView()); return; }
+    if (!signedIn()) { app.appendChild(connectView()); return; }
+    app.appendChild(dashView());
+  }
+
+  /* ---------- start ---------- */
+  var k0 = (location.hash || "").slice(1);
+  if (PERIODS[k0]) st.tab = k0;
+  window.addEventListener("hashchange", function () {
+    var k = location.hash.slice(1);
+    if (PERIODS[k] && k !== st.tab) { st.tab = k; render(); }
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && cid() && signedIn() && st.status !== "loading" && Date.now() - st.updated > 120000) load(false);
+  });
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
+  }
+  handleCallback().then(function () {
+    render();
+    if (cid() && signedIn()) load(false);
+  });
+})();
+</script>
+</body>
+</html>
