@@ -49,8 +49,9 @@ body{
   padding-right:max(16px,env(safe-area-inset-right,0px));
 }
 #app{max-width:600px;margin:0 auto;display:grid;gap:14px}
-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:4px 0 2px}
-h1{font:800 36px/1 var(--f-display);letter-spacing:.01em;text-transform:uppercase;margin:0;text-wrap:balance}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:12px;padding:4px 0 2px}
+header>div:first-child{flex:1 1 210px;min-width:0}
+h1{font:800 clamp(28px,9vw,36px)/1 var(--f-display);letter-spacing:.01em;text-transform:uppercase;margin:0;text-wrap:balance}
 .sub{color:var(--muted);margin:8px 0 0;font-size:13px}
 .hbtns{display:flex;gap:6px;flex:none}
 .sbtn{min-height:40px;padding:0 13px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;font:600 13px var(--f-body);cursor:pointer}
@@ -83,6 +84,15 @@ a.pill:hover{background:rgba(0,0,0,.36)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;min-width:0}
 h2{font:700 12px var(--f-body);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0}
 .chead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:14px}
+.seg{display:flex;gap:2px;padding:3px;background:var(--bg);border:1px solid var(--line);border-radius:10px;flex:none}
+.seg button{min-height:32px;padding:0 11px;border:0;background:none;color:var(--muted);font:600 12px var(--f-body);border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.chead.c{align-items:center}
+.grows{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:14px}
+.grow{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:12px;align-items:center}
+.grow .gn{font-weight:600;text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grow .gm{height:8px;border-radius:4px;background:var(--grid);overflow:hidden;margin-top:6px}
+.grow .gm i{display:block;height:100%;background:var(--accent);border-radius:4px}
 .peak{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 
 .chart{position:relative;padding-top:8px}
@@ -130,6 +140,7 @@ a.chip:hover{border-color:var(--accent)}
 .stack{display:grid;gap:10px;margin-top:14px}
 .banner{background:var(--warn-bg);color:var(--warn-fg);border-radius:12px;padding:12px 14px;font-size:14px}
 .banner button{margin-top:8px}
+.card .note{margin-top:12px}
 .note{font-size:12.5px;color:var(--muted);margin:2px 2px 0;max-width:60ch}
 .empty strong{display:block;font:800 26px/1.05 var(--f-display);text-transform:uppercase}
 .empty p{margin:8px 0 0;color:var(--muted);max-width:52ch}
@@ -329,6 +340,7 @@ a.chip:hover{border-color:var(--accent)}
     }).then(function (j) {
       set("lw_hist", j.hist || []); set("lw_gaps", j.gaps || []);
       if (j.top) set("lw_cache", j.top);
+      set("lw_gen", j.genres || {});
       st.srvErr = j.err || null; st.lastRun = j.lastRun || 0;
       st.status = "ready"; st.err = null; st.updated = Date.now(); render();
     }).catch(function (e) {
@@ -499,6 +511,51 @@ a.chip:hover{border-color:var(--accent)}
   }
   function emptyCard(title, body) { return h("section", { class: "card empty" }, h("strong", { text: title }), h("p", { text: body })); }
 
+  function genOf(name) { var m = get("lw_gen", {}); return m[String(name || "").toLowerCase().trim()] || null; }
+  function viewMode() { return srvKey() && get("lw_view", "artists") === "genres" ? "genres" : "artists"; }
+  function seg() {
+    var cur = viewMode(), box = h("div", { class: "seg", role: "group", "aria-label": "List type" });
+    [["artists", "Artists"], ["genres", "Genres"]].forEach(function (p) {
+      box.appendChild(h("button", { type: "button", "aria-pressed": cur === p[0] ? "true" : "false", text: p[1], onclick: function () {
+        var y = window.scrollY; set("lw_view", p[0]); render(); window.scrollTo(0, y);
+      } }));
+    });
+    return box;
+  }
+  function aggGenres(entries) {
+    var tot = {}, cover = 0, sum = 0, W = [1, 0.6, 0.4];
+    entries.forEach(function (e) {
+      var g = genOf(e.n);
+      if (!g || !g.length) return;
+      cover++;
+      g.forEach(function (t, i) { var x = e.w * W[i]; tot[t] = (tot[t] || 0) + x; sum += x; });
+    });
+    var list = Object.keys(tot).map(function (k) { return { n: k, w: tot[k] }; }).sort(function (a, b) { return b.w - a.w; });
+    return { list: list, sum: sum, cover: cover, n: entries.length };
+  }
+  function genreBody(agg) {
+    var box = h("div");
+    if (!agg.list.length) {
+      box.appendChild(h("p", { class: "note", text: "Genres are still being looked up. This happens in the background every 30 minutes, so check back soon." }));
+      return box;
+    }
+    var ol = h("ol", { class: "grows" }), max = agg.list[0].w;
+    agg.list.slice(0, 8).forEach(function (x, i) {
+      var bar = h("i"); bar.style.width = Math.max(4, Math.round(x.w / max * 100)) + "%";
+      ol.appendChild(h("li", { class: "grow" },
+        h("div", { class: "rk", text: String(i + 1) }),
+        h("div", { class: "t" }, h("div", { class: "gn", text: x.n }), h("div", { class: "gm" }, bar)),
+        h("div", { class: "badge", text: Math.round(x.w / agg.sum * 100) + "%" })));
+    });
+    box.appendChild(ol);
+    box.appendChild(h("p", { class: "note", text: "Genres known for " + agg.cover + " of " + agg.n + " artists. Tags come from Spotify and MusicBrainz, so treat them as approximate." + (agg.cover < agg.n ? " The rest are looked up in the background." : "") }));
+    return box;
+  }
+  function listCard(titles, artistList, entries) {
+    var genres = viewMode() === "genres";
+    var head = h("div", { class: "chead" + (srvKey() ? " c" : "") }, h("h2", { text: genres ? titles[1] : titles[0] }), srvKey() ? seg() : null);
+    return h("section", { class: "card" }, head, genres ? genreBody(aggGenres(entries)) : artistList);
+  }
   function weekView() {
     var w = weekData(), out = [];
     if (!w.plays.length) {
@@ -524,7 +581,7 @@ a.chip:hover{border-color:var(--accent)}
     out.push(h("section", { class: "card" }, h("h2", { text: "Most played tracks" }), tl));
     var al = h("ol", { class: "rows" });
     w.artists.slice(0, 8).forEach(function (x, i) { al.appendChild(rowItem(i, x.i, x.n, "", plural(x.c, "play"), artistUrl(x.id))); });
-    out.push(h("section", { class: "card" }, h("h2", { text: "Most played artists" }), al));
+    out.push(listCard(["Most played artists", "Most played genres"], al, w.artists.map(function (x) { return { n: x.n, w: x.c }; })));
     var first = w.hist.length ? new Date(w.hist[0].p) : null;
     var note = (srvKey() ? "Earwormed checks Spotify for you every 30 minutes, even when the app is closed, and saves your plays" : "Spotify only shares your last 50 plays, so the app saves them on this device each time you open it") + (first ? " (logging since " + fmtDay(first) + ")" : "") + ". Minutes assume each play ran its full length.";
     var gaps = get("lw_gaps", []).filter(function (g) { return Date.parse(g.to) >= w.start.getTime(); });
@@ -568,7 +625,7 @@ a.chip:hover{border-color:var(--accent)}
     out.push(h("section", { class: "card" }, h("h2", { text: "Top tracks" }), tl));
     var al = h("ol", { class: "rows" });
     artists.slice(0, 10).forEach(function (x, i) { al.appendChild(rowItem(i, x.i, x.n, "", "", artistUrl(x.id), true)); });
-    out.push(h("section", { class: "card" }, h("h2", { text: "Top artists" }), al));
+    out.push(listCard(["Top artists", "Top genres"], al, artists.map(function (x, i) { return { n: x.n, w: artists.length - i }; })));
     var other = c[isMonth ? "l" : "s"], otherIds = {}, picks = [];
     (other.a || []).forEach(function (x) { otherIds[x.id] = 1; });
     if (isMonth) artists.slice(0, 20).forEach(function (x) { if (!otherIds[x.id]) picks.push(x); });

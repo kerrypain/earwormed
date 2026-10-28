@@ -953,6 +953,7 @@ function slimT(x) {
   return { id: x.id, n: x.name || "", a: ar.map((q) => q.name).join(", "), a1: ar[0] ? ar[0].name : "", au: ar[0] ? ar[0].id : "", d: x.duration_ms || 0, i: pickImg(al.images), y: isNaN(y) ? 0 : y };
 }
 var slimA = (x) => ({ id: x.id, n: x.name || "", i: pickImg(x.images) });
+var gkey = (n) => String(n || "").toLowerCase().trim();
 function mergeHistory(hist, gaps, items) {
   const seen = new Set(hist.map((r) => r.p + "|" + r.t));
   const latest = hist.length ? hist[hist.length - 1].p : "";
@@ -996,6 +997,7 @@ async function collect(st, userId, opts = {}) {
     if (m.added) await st.setJSON(K(userId, "hist"), m.hist);
     if (m.gaps.length !== gaps.length) await st.setJSON(K(userId, "gaps"), m.gaps);
     const top = await st.get(K(userId, "top"), { type: "json" });
+    const sg = {};
     if (opts.forceTop || !top || Date.now() - top.ts > TOP_TTL) {
       const r = await Promise.all([
         api(tok.access_token, "/me/top/tracks?time_range=short_term&limit=50"),
@@ -1003,6 +1005,10 @@ async function collect(st, userId, opts = {}) {
         api(tok.access_token, "/me/top/tracks?time_range=long_term&limit=50"),
         api(tok.access_token, "/me/top/artists?time_range=long_term&limit=50")
       ]);
+      for (const a of [...r[1].items || [], ...r[3].items || []]) {
+        const g = cleanTags(a.genres || []);
+        if (a.name && g.length) sg[gkey(a.name)] = g;
+      }
       await st.setJSON(K(userId, "top"), {
         ts: Date.now(),
         s: { t: (r[0].items || []).map(slimT), a: (r[1].items || []).map(slimA) },
@@ -1013,7 +1019,7 @@ async function collect(st, userId, opts = {}) {
     cfg.errMsg = "";
     cfg.lastRun = Date.now();
     await st.setJSON(K(userId, "config"), cfg);
-    return { ok: true, added: m.added };
+    return { ok: true, added: m.added, sg };
   } catch (e) {
     cfg.err = e.code === "http403" ? "forbidden" : "fetch";
     cfg.errMsg = e.message;
@@ -1022,11 +1028,81 @@ async function collect(st, userId, opts = {}) {
     return { ok: false, reason: cfg.err };
   }
 }
+var JUNK = /* @__PURE__ */ new Set(["seen live", "favorites", "favourites", "favorite", "favourite", "american", "british", "english", "uk", "usa", "united kingdom", "united states", "male vocalists", "female vocalists", "swedish", "german", "canadian", "australian", "scottish", "welsh", "irish", "french", "finnish", "norwegian", "japanese", "ukrainian", "american rock", "00s", "10s", "20s", "90s", "80s", "70s", "60s", "under 2000 listeners", "all", "rock and indie"]);
+function cleanTags(tags) {
+  const out = [];
+  for (let t of tags) {
+    t = String(t || "").toLowerCase().trim();
+    if (!t || t.length > 28 || JUNK.has(t) || /^\d{2,4}s?$/.test(t) || out.includes(t)) continue;
+    out.push(t);
+    if (out.length === 3) break;
+  }
+  return out;
+}
+async function mergeGenres(st, entries, src) {
+  const names = Object.keys(entries);
+  if (!names.length) return;
+  const cur = await st.get("genres", { type: "json" }) || {};
+  for (const n of names) cur[n] = { g: entries[n], src, ts: Date.now() };
+  await st.setJSON("genres", cur);
+}
+var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+async function mbLookup(name) {
+  const q = 'artist:"' + String(name).replace(/["\\]/g, " ") + '"';
+  const r = await fetch("https://musicbrainz.org/ws/2/artist/?fmt=json&limit=5&query=" + encodeURIComponent(q), {
+    headers: { "User-Agent": "Earwormed/1.0 (https://earwormed.netlify.app)", Accept: "application/json" }
+  });
+  if (r.status === 503 || r.status === 429) {
+    const e = new Error("rate");
+    e.code = "rate";
+    throw e;
+  }
+  if (!r.ok) return [];
+  const j = await r.json().catch(() => ({}));
+  const hit = (j.artists || []).find((a) => norm(a.name) === norm(name) && (a.score || 0) >= 90 && (a.tags || []).length);
+  if (!hit) return [];
+  return cleanTags(hit.tags.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).map((t) => t.name));
+}
+var MONTH = 30 * 24 * 36e5;
+async function enrichGenres(st, limit = 12) {
+  const cur = await st.get("genres", { type: "json" }) || {};
+  const want = /* @__PURE__ */ new Map();
+  const out = await st.list({ prefix: "u/" });
+  const cutoff = new Date(Date.now() - MONTH).toISOString();
+  for (const b of out.blobs || []) {
+    if (!b.key.endsWith("/hist") && !b.key.endsWith("/top")) continue;
+    const v = await st.get(b.key, { type: "json" });
+    if (!v) continue;
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0 && v[i].p >= cutoff; i--) if (v[i].a1) want.set(gkey(v[i].a1), v[i].a1);
+    } else for (const k of ["s", "l"]) for (const a of v[k] && v[k].a || []) if (a.n) want.set(gkey(a.n), a.n);
+  }
+  const todo = [...want.entries()].filter(([k]) => !cur[k] || cur[k].src === "mb" && !cur[k].g.length && Date.now() - cur[k].ts > MONTH).slice(0, limit);
+  const found = {};
+  for (let i = 0; i < todo.length; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1100));
+    try {
+      found[todo[i][0]] = await mbLookup(todo[i][1]);
+    } catch (e) {
+      break;
+    }
+  }
+  await mergeGenres(st, found, "mb");
+  return { looked: Object.keys(found).length, left: todo.length - Object.keys(found).length };
+}
 async function collectAll(st) {
   await migrate(st);
   const out = await st.list({ prefix: "u/" });
   const ids = (out.blobs || []).map((b) => b.key).filter((k) => k.endsWith("/config")).map((k) => k.slice(2, -7));
-  return Promise.all(ids.map((id) => collect(st, id).catch(() => ({ ok: false }))));
+  const res = await Promise.all(ids.map((id) => collect(st, id).catch(() => ({ ok: false }))));
+  const sg = {};
+  for (const r of res) Object.assign(sg, r.sg || {});
+  try {
+    await mergeGenres(st, sg, "spotify");
+    await enrichGenres(st);
+  } catch (e) {
+  }
+  return res;
 }
 
 // src/collect.mjs

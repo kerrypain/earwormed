@@ -964,6 +964,7 @@ function slimT(x) {
   return { id: x.id, n: x.name || "", a: ar.map((q) => q.name).join(", "), a1: ar[0] ? ar[0].name : "", au: ar[0] ? ar[0].id : "", d: x.duration_ms || 0, i: pickImg(al.images), y: isNaN(y) ? 0 : y };
 }
 var slimA = (x) => ({ id: x.id, n: x.name || "", i: pickImg(x.images) });
+var gkey = (n) => String(n || "").toLowerCase().trim();
 function mergeHistory(hist, gaps, items) {
   const seen = new Set(hist.map((r) => r.p + "|" + r.t));
   const latest = hist.length ? hist[hist.length - 1].p : "";
@@ -1007,6 +1008,7 @@ async function collect(st, userId, opts = {}) {
     if (m.added) await st.setJSON(K(userId, "hist"), m.hist);
     if (m.gaps.length !== gaps.length) await st.setJSON(K(userId, "gaps"), m.gaps);
     const top = await st.get(K(userId, "top"), { type: "json" });
+    const sg = {};
     if (opts.forceTop || !top || Date.now() - top.ts > TOP_TTL) {
       const r = await Promise.all([
         api(tok.access_token, "/me/top/tracks?time_range=short_term&limit=50"),
@@ -1014,6 +1016,10 @@ async function collect(st, userId, opts = {}) {
         api(tok.access_token, "/me/top/tracks?time_range=long_term&limit=50"),
         api(tok.access_token, "/me/top/artists?time_range=long_term&limit=50")
       ]);
+      for (const a of [...r[1].items || [], ...r[3].items || []]) {
+        const g = cleanTags(a.genres || []);
+        if (a.name && g.length) sg[gkey(a.name)] = g;
+      }
       await st.setJSON(K(userId, "top"), {
         ts: Date.now(),
         s: { t: (r[0].items || []).map(slimT), a: (r[1].items || []).map(slimA) },
@@ -1024,7 +1030,7 @@ async function collect(st, userId, opts = {}) {
     cfg.errMsg = "";
     cfg.lastRun = Date.now();
     await st.setJSON(K(userId, "config"), cfg);
-    return { ok: true, added: m.added };
+    return { ok: true, added: m.added, sg };
   } catch (e) {
     cfg.err = e.code === "http403" ? "forbidden" : "fetch";
     cfg.errMsg = e.message;
@@ -1033,6 +1039,25 @@ async function collect(st, userId, opts = {}) {
     return { ok: false, reason: cfg.err };
   }
 }
+var JUNK = /* @__PURE__ */ new Set(["seen live", "favorites", "favourites", "favorite", "favourite", "american", "british", "english", "uk", "usa", "united kingdom", "united states", "male vocalists", "female vocalists", "swedish", "german", "canadian", "australian", "scottish", "welsh", "irish", "french", "finnish", "norwegian", "japanese", "ukrainian", "american rock", "00s", "10s", "20s", "90s", "80s", "70s", "60s", "under 2000 listeners", "all", "rock and indie"]);
+function cleanTags(tags) {
+  const out2 = [];
+  for (let t of tags) {
+    t = String(t || "").toLowerCase().trim();
+    if (!t || t.length > 28 || JUNK.has(t) || /^\d{2,4}s?$/.test(t) || out2.includes(t)) continue;
+    out2.push(t);
+    if (out2.length === 3) break;
+  }
+  return out2;
+}
+async function mergeGenres(st, entries, src) {
+  const names = Object.keys(entries);
+  if (!names.length) return;
+  const cur = await st.get("genres", { type: "json" }) || {};
+  for (const n of names) cur[n] = { g: entries[n], src, ts: Date.now() };
+  await st.setJSON("genres", cur);
+}
+var MONTH = 30 * 24 * 36e5;
 
 // src/api.mjs
 var H = { "content-type": "application/json", "cache-control": "no-store" };
@@ -1078,6 +1103,8 @@ var api_default = async (req) => {
       await st.setJSON(K(userId2, "config"), { kh, cid: b.cid, refresh: tok.refresh_token || b.refresh, uid, created: old && old.created || Date.now(), err: null });
       await st.setJSON("k/" + kh, userId2);
       const res = await collect(st, userId2, { forceTop: true });
+      if (res.sg) await mergeGenres(st, res.sg, "spotify").catch(() => {
+      });
       return out({ ok: true, collected: res.ok });
     }
     const a = await authed(req, st);
@@ -1087,7 +1114,9 @@ var api_default = async (req) => {
       const q = new URL(req.url).searchParams;
       let c = cfg;
       if (q.get("refresh") === "1" && (!cfg.lastRun || Date.now() - cfg.lastRun > 45e3)) {
-        await collect(st, userId, { forceTop: true });
+        const res = await collect(st, userId, { forceTop: true });
+        if (res.sg) await mergeGenres(st, res.sg, "spotify").catch(() => {
+        });
         c = await st.get(K(userId, "config"), { type: "json" }) || cfg;
       }
       const [hist, gaps, top] = await Promise.all([
@@ -1095,7 +1124,13 @@ var api_default = async (req) => {
         st.get(K(userId, "gaps"), { type: "json" }),
         st.get(K(userId, "top"), { type: "json" })
       ]);
-      return out({ hist: hist || [], gaps: gaps || [], top: top || null, err: c.err || null, lastRun: c.lastRun || 0 });
+      const all = await st.get("genres", { type: "json" }) || {}, genres = {}, mine = /* @__PURE__ */ new Set();
+      for (const h of hist || []) if (h.a1) mine.add(gkey(h.a1));
+      if (top) {
+        for (const k of ["s", "l"]) for (const x of top[k] && top[k].a || []) if (x.n) mine.add(gkey(x.n));
+      }
+      for (const n of mine) if (all[n]) genres[n] = all[n].g;
+      return out({ hist: hist || [], gaps: gaps || [], top: top || null, genres, err: c.err || null, lastRun: c.lastRun || 0 });
     }
     if (req.method === "POST" && path === "unregister") {
       await st.delete(K(userId, "config"));
